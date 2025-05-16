@@ -1,0 +1,45 @@
+---
+title: "Anàlisi de dades òmiques (ADO)"
+subtitle: "Prova d'avaluació continuada 2 (PAC2)"
+author: "Carla Panisello Aranda"
+email: "cpaniselloa@uoc.edu"
+output:
+  word_document:
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+Descripcion del proyecto
+
+# 1. Download the data
+```{r}
+
+```
+
+# 1.1 Load the data
+```{r}
+
+```
+
+# QC
+```{r}
+
+```
+
+# PCA
+```{r}
+
+```
+
+# DEG
+```{r}
+
+```
+
+# Functional analysis (ORA-GSEA)
+```{r}
+
+```
+
+
