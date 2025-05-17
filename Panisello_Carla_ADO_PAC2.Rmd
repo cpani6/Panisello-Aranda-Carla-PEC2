@@ -10,16 +10,70 @@ editor_options:
     wrap: 72
 ---
 
-Descripcion del proyecto
+*Treballem amb el dataset GSE161731 del treball de McClain et al., realitzant un anàlisis d'expressió gènica diferencial en R/Bioconductor en pacients amb COVID-19 en comparació amb altres patologies. A continuació es troba el codi emprat per la realització del treball.*
 
-# 1. Download the data
+# Load packages that will be used in this code
+
 ```{r}
-
+suppressPackageStartupMessages(library(GEOquery))
+suppressPackageStartupMessages(library(AnnotationDbi))
+suppressPackageStartupMessages(library(EnsDb.Hsapiens.v86))
+suppressPackageStartupMessages(library(GenomicRanges))
+suppressPackageStartupMessages(library(SummarizedExperiment))
 ```
 
-# 1.1 Load the data
-```{r}
+# Download the files from GSE161731
 
+```{r}
+gse <- getGEOSuppFiles("GSE161731")
+
+# The files dowloaded contains the metadata and the expression data.
+rownames(gse)
+
+expr_matrix <- read.csv(rownames(gse)[1], row.names = 1,check.names = FALSE)
+meta_info <- read.csv(rownames(gse)[2])
+
+# Buscamos las features para generar las coordenadas geneticas
+gene_ids <- rownames(expr_matrix)
+
+# Obtener las coordenadas geneticas junto a los identificadores de gen
+gene_ranges <- genes(EnsDb.Hsapiens.v86, filter = GeneIdFilter(gene_ids))
+
+# Tenemos informacion de 57602 genes, y la matriz de expresion contempla 60675, por lo tanto vamos a filtrar los genes de la matriz de expresion para poder analizar los genes de los que tenemos informacion.
+expr_matrix <- expr_matrix[gene_ranges$gene_id,]
+```
+
+```{r}
+# El numero de columnas de la matiz de expresion y el numero de filas de la metadata no coincide, por lo tanto vamos a seleccionar aquellas muestras analizadas de las que tenemos informacion.
+common_samples <- intersect(colnames(expr_matrix), meta_info$rna_id)
+
+# Filtrar y ordenar muestras en ambos objetos
+expr_matrix_final <- expr_matrix[, common_samples]
+meta_info_final <- meta_info[meta_info$rna_id %in% common_samples, ]
+```
+
+# 1.1 Generate to SummarizedExperiment
+
+```{r}
+# Check that all final objects are okey.
+dim(expr_matrix_final)
+dim(meta_info_final)
+dim(gene_ranges)
+
+# Mirem si hi ha diferences en el IDs.
+setdiff(colnames(expr_matrix_final),meta_info_final$rna_id)
+setdiff(rownames(expr_matrix_final),gene_ranges$gene_id)
+
+# Create a SummarizedExperiment 
+
+Covid_se <- SummarizedExperiment(
+  assays = list(counts = expr_matrix_final),
+  colData = meta_info_final,
+  rowRanges = gene_ranges
+)
+
+# check the object
+Covid_se
 ```
 
 # QC
