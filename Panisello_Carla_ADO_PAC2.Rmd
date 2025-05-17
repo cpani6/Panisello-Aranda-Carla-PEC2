@@ -22,7 +22,7 @@ suppressPackageStartupMessages(library(GenomicRanges))
 suppressPackageStartupMessages(library(SummarizedExperiment))
 ```
 
-# Download the files from GSE161731
+# 1 Download the files from GSE161731
 
 ```{r}
 gse <- getGEOSuppFiles("GSE161731")
@@ -65,7 +65,6 @@ setdiff(colnames(expr_matrix_final),meta_info_final$rna_id)
 setdiff(rownames(expr_matrix_final),gene_ranges$gene_id)
 
 # Create a SummarizedExperiment 
-
 Covid_se <- SummarizedExperiment(
   assays = list(counts = expr_matrix_final),
   colData = meta_info_final,
@@ -76,9 +75,47 @@ Covid_se <- SummarizedExperiment(
 Covid_se
 ```
 
-# QC
-```{r}
+# 2 Nateja de les dades
 
+```{r}
+# Select only the 
+Covid_se_filter <- Covid_se[,Covid_se$cohort %in% c("COVID-19","Bacterial","healthy")]
+
+table(Covid_se_filter$cohort)
+
+# There is some duplicated individuals, lets filter them.
+table(duplicated(Covid_se_filter$subject_id))
+# 31 duplicats
+
+Covid_se_clean <- Covid_se_filter[,!duplicated(Covid_se_filter$subject_id) ]
+table(duplicated(Covid_se_filter$subject_id))
+
+# check the variable classes
+
+str(colData(Covid_se_clean))
+# We need to change age, and cohort.
+colData(Covid_se_clean)$age <- gsub(">","", colData(Covid_se_clean)$age)
+colData(Covid_se_clean)$age <- as.numeric(colData(Covid_se_clean)$age)
+
+# Convertimos cohort a factor
+colData(Covid_se_clean)$cohort <- as.factor(colData(Covid_se_clean)$cohort)
+
+# Clean names 
+colnames(colData(Covid_se_clean)) <- gsub("[\\s/\\.()\\-]+", "_", colnames(colData(Covid_se_clean)))
+rownames(colData(Covid_se_clean)) <- gsub("[\\s/\\.()\\-]+", "_", rownames(colData(Covid_se_clean)))
+colnames(Covid_se_clean) <- gsub("[\\s/\\.()\\-]+", "_", colnames(Covid_se_clean))
+
+# Limpiamos el contenido de la metadata
+colData(Covid_se_clean) <- as.data.frame(lapply(as.data.frame(colData(Covid_se_clean)), 
+    function(col) { gsub("[\\s/\\.()\\-]+", "_", col)}))
+
+# 75 mostres de manera
+myseed <- sum(utf8ToInt("carlapaniselloaranda")) 
+set.seed(myseed)
+muestras_seleccionadas <- sample(colnames(Covid_se_clean), 75)
+
+Covid_75<- Covid_se_clean[,muestras_seleccionadas]
+Covid_75
 ```
 
 # PCA
