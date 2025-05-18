@@ -20,115 +20,298 @@ suppressPackageStartupMessages(library(AnnotationDbi))
 suppressPackageStartupMessages(library(EnsDb.Hsapiens.v86))
 suppressPackageStartupMessages(library(GenomicRanges))
 suppressPackageStartupMessages(library(SummarizedExperiment))
+suppressPackageStartupMessages(library(edgeR))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(reshape2))
+suppressPackageStartupMessages(library(gplots))
 ```
 
-# 1 Download the files from GSE161731
+# 1. Download the files from GSE161731
 
 ```{r}
-gse <- getGEOSuppFiles("GSE161731")
+# gse <- getGEOSuppFiles("GSE161731") # Només ho fem servir el primer cop, desrpés es crea una carpeta "GSE161731" on estem treballant.
 
-# The files dowloaded contains the metadata and the expression data.
-rownames(gse)
+# Llegim els arxius de la carpeta.
+gse<-list.files(path = "GSE161731",full.names = TRUE)
 
-expr_matrix <- read.csv(rownames(gse)[1], row.names = 1,check.names = FALSE)
-meta_info <- read.csv(rownames(gse)[2])
+# Els arxius contentn les dades d'expressió i la metadata.
+gse
 
-# Buscamos las features para generar las coordenadas geneticas
+# Counts
+expr_matrix <- read.csv(gse[1], row.names = 1,check.names = FALSE)
+
+# Counts Key
+meta_info <- read.csv(gse[2])
+
+# Busquem els features per generar les coordenades genètiques.
 gene_ids <- rownames(expr_matrix)
 
-# Obtener las coordenadas geneticas junto a los identificadores de gen
+# Obtenim les coordenades genètiques juntament amb els identificadors del gen.
 gene_ranges <- genes(EnsDb.Hsapiens.v86, filter = GeneIdFilter(gene_ids))
 
-# Tenemos informacion de 57602 genes, y la matriz de expresion contempla 60675, por lo tanto vamos a filtrar los genes de la matriz de expresion para poder analizar los genes de los que tenemos informacion.
+# Tenim informació de 57602 gens, i la matriu d'expressió conté 60675. Per tant, cal filtrar els gens de la matriu d'expressió per poder analitzar aquells que tenim tota la informació.
 expr_matrix <- expr_matrix[gene_ranges$gene_id,]
 ```
 
 ```{r}
-# El numero de columnas de la matiz de expresion y el numero de filas de la metadata no coincide, por lo tanto vamos a seleccionar aquellas muestras analizadas de las que tenemos informacion.
+# El número de columnes de la matriu d'expressió i el número de files de la metadata no coincideix. Per aquest motiu, seleccionem mostres analitzades on tenim tota la informació.
 common_samples <- intersect(colnames(expr_matrix), meta_info$rna_id)
 
-# Filtrar y ordenar muestras en ambos objetos
+# Filtrem i ordenem mostres dels dos objectes
 expr_matrix_final <- expr_matrix[, common_samples]
 meta_info_final <- meta_info[meta_info$rna_id %in% common_samples, ]
 ```
 
-# 1.1 Generate to SummarizedExperiment
+## 1.1 Generate SummarizedExperiment
 
 ```{r}
-# Check that all final objects are okey.
+# Mirem la dimensió dels objectes finals per comprovar que tot està correcte i que quadra.
 dim(expr_matrix_final)
 dim(meta_info_final)
-dim(gene_ranges)
+length(gene_ranges)
 
-# Mirem si hi ha diferences en el IDs.
+# Mirem si hi ha diferències en el IDs.
 setdiff(colnames(expr_matrix_final),meta_info_final$rna_id)
 setdiff(rownames(expr_matrix_final),gene_ranges$gene_id)
 
-# Create a SummarizedExperiment 
+# Creem objecte SummarizedExperiment 
 Covid_se <- SummarizedExperiment(
   assays = list(counts = expr_matrix_final),
   colData = meta_info_final,
   rowRanges = gene_ranges
 )
 
-# check the object
+# Comprovem que objecte s'ha generat correctament.
 Covid_se
 ```
 
-# 2 Nateja de les dades
+# 2. Clean data
 
 ```{r}
-# Select only the 
+# Seleccionem només les dades d'interès que corresponen a COVID-19, Bacterial i healthy.
 Covid_se_filter <- Covid_se[,Covid_se$cohort %in% c("COVID-19","Bacterial","healthy")]
 
 table(Covid_se_filter$cohort)
 
-# There is some duplicated individuals, lets filter them.
-table(duplicated(Covid_se_filter$subject_id))
-# 31 duplicats
-
-Covid_se_clean <- Covid_se_filter[,!duplicated(Covid_se_filter$subject_id) ]
+# Filtrem individus duplicats
 table(duplicated(Covid_se_filter$subject_id))
 
-# check the variable classes
+# Ens surt que hi ha 31, els eliminem i només ens quedem amb el primer valor.
+Covid_se_clean <- Covid_se_filter[,!duplicated(Covid_se_filter$subject_id)]
+table(duplicated(Covid_se_clean$subject_id))
 
+# Mirem que les classes dels diferents paràmetres estiguin ben establertes.
 str(colData(Covid_se_clean))
-# We need to change age, and cohort.
+
+# Canviem edat (de caràcter a numèric) i cohort (de caràcter a factor)
 colData(Covid_se_clean)$age <- gsub(">","", colData(Covid_se_clean)$age)
 colData(Covid_se_clean)$age <- as.numeric(colData(Covid_se_clean)$age)
 
-# Convertimos cohort a factor
 colData(Covid_se_clean)$cohort <- as.factor(colData(Covid_se_clean)$cohort)
 
-# Clean names 
+# Netegem noms treient els símbols indicats a l'enunciat i substituïn per "_".
 colnames(colData(Covid_se_clean)) <- gsub("[\\s/\\.()\\-]+", "_", colnames(colData(Covid_se_clean)))
 rownames(colData(Covid_se_clean)) <- gsub("[\\s/\\.()\\-]+", "_", rownames(colData(Covid_se_clean)))
 colnames(Covid_se_clean) <- gsub("[\\s/\\.()\\-]+", "_", colnames(Covid_se_clean))
 
-# Limpiamos el contenido de la metadata
-colData(Covid_se_clean) <- as.data.frame(lapply(as.data.frame(colData(Covid_se_clean)), 
-    function(col) { gsub("[\\s/\\.()\\-]+", "_", col)}))
 
-# 75 mostres de manera
+# TODO: check inside the colData!!
+
+# Agafem 75 mostres de manera aleatòria.
 myseed <- sum(utf8ToInt("carlapaniselloaranda")) 
 set.seed(myseed)
-muestras_seleccionadas <- sample(colnames(Covid_se_clean), 75)
+selected_samples <- sample(colnames(Covid_se_clean), 75)
 
-Covid_75<- Covid_se_clean[,muestras_seleccionadas]
+Covid_75<- Covid_se_clean[,selected_samples]
 Covid_75
 ```
 
-# PCA
+# 3. Quality Control
+
+## 3.1. Filtering
+
+```{r}
+# Eliminem els gens que tenen low counts. Ho fem amb count-per-million (CPM) per evitar l'efecte de gens expressats en llibreries més grans en comparació a més petites. Fiquem 0.5 de cut-off en com a mínim dues llibreries.
+Covid_75_dge <- DGEList(counts = assay(Covid_75))
+keep <- rowSums(cpm(Covid_75_dge) > 0.5) >= 2
+table(keep)
+Covid_75_dge <- Covid_75_dge[keep,]
+# Filtrem el summarized experiment tambe 
+Covid_75 <- Covid_75[keep,]
+```
+
+Observem que 32950 gens es perden. En l'estudi treballarem amb 24652.
+
+## 3.2. Exploring
+
+```{r}
+# Primer calculem el nombre total de counts per mostra
+sumdata <- data.frame(
+  value = round(colSums(assay(Covid_75)) / 1e6, 1)  # total en milions, amb un decimal
+)
+sumdata$key <- colnames(Covid_75)
+sumdata$col <- as.character(Covid_75$cohort) # Fiquem color per columna
+
+ggplot(data = sumdata, aes(x = key, y = value, fill = col)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1,size = 4.5), axis.ticks.x = element_blank()) +
+  labs(x = "Samples", y = "Million Reads") +
+  geom_hline(yintercept = 20, linetype = 2, color = "gray56") +
+  scale_fill_manual(values = c("COVID-19" = "#CBC6B9", "Bacterial" = "#b0c4b1", "healthy" = "#4a5759")) 
+```
+
+Observem la distribució de les diferents mostres. Observem com es distribueixen. Per poder fer DEGs cal que normalitzem les mostres.
+
+## 3.3. Normalitzation
+
+```{r}
+# Normalitzarem amb el mètode trimmed mean of M values (TMM) fent servir 'calcNormFactors'.
+# TODO: revisar normalizacion
+Covid_75_dge <- calcNormFactors(Covid_75_dge)
+Covid_75_dge$samples
+
+# Transformem amb LogCPM
+logCPM <- cpm(Covid_75_dge, log=TRUE)
+
+# Guardem al Expression assay les dades normalitzades ()
+assays(Covid_75)[["normalized"]] <- Covid_75_dge$counts
+
+# Plot per comprovar si les dades s'han noirmalitzat be
+# MA plot
+par(mfrow = c(1, 2))
+maPlot(assay(Covid_75,"counts")[,1], assay(Covid_75,"counts")[,3], pch=19, cex=.5, ylim=c(-8,8),
+       allCol="darkgray", lowess=TRUE,
+       xlab=expression( A == log[2] (sqrt(Sample1 %.% Sample3))  ),
+       ylab=expression(M == log[2](Sample1/Sample3)))
+       grid(col="black") 
+title("Raw data")
+
+maPlot(assay(Covid_75,"normalized")[,1],assay(Covid_75,"normalized")[,3], pch=19, cex=.5, ylim=c(-8,8),
+       allCol="darkgray", lowess=TRUE,
+       xlab=expression( A == log[2] (sqrt(Sample1 %.% Sample3))),
+       ylab=expression(M == log[2](Sample1/Sample3)))
+       grid(col="black") 
+title("Normalized data")
+
+# Boxplots
+par(mfrow = c(1, 2))
+EDASeq::plotRLE(as.matrix(assay(Covid_75)), outline=FALSE,names=NULL) 
+title("Raw data")
+EDASeq::plotRLE(assay(Covid_75,"normalized"), outline=FALSE,names=NULL) 
+title("Normalized data")
+
+```
+
+## 4. Exploratory Analysis
+
+```{r}
+# Podem fer-ho MDS que ens permet fer exploració global i control de qualitat
+group <- Covid_75$cohort
+pch <- c(15, 16, 17)  
+colors <- rep(c("#b0c4b1", "#CBC6B9", "#4a5759"), length.out=length(levels(group)))
+group <- factor(group, levels = c("COVID-19", "Bacterial", "healthy"))
+
+# MDS plot
+plotMDS(Covid_75_dge, col = colors[group], pch = pch[group], main = "MDS plot - Perfil d'expressió")
+legend("topright", legend = levels(group), col = colors, pch = pch)
+```
+
+Observem que sembla que hi ha un outlier dintre del grup de Bacterial. A part, dona la sensació que les mostres de COVID-19 i healthy s'agrupen similar, mentre que Bacterial més diferent. 
+
+Podem seguir fent anàlisis exploratòria amb MD plot.
+
+```{r}
+# MD plot
+plotMD(Covid_75_dge, column = 1)
+abline(h = 0, col = "red", lty = 2, lwd = 2)
+```
+
+```{r}
+#Podem fer també PCA
+pca <- prcomp(t(logCPM), scale. = TRUE)
+cols <- c("COVID-19" = "red", "Bacterial" = "blue", "healthy" = "darkgreen")
+plot(pca$x[,1], pca$x[,2], col=cols[group], pch=16,
+     xlab="PC1", ylab="PC2", main="PCA segons cohort")
+legend("bottomright", legend=levels(group), col=cols, pch=16)
+```
+Observem el mateix que en el cas anterior, sembla que Bacterial és el més diferenciat, i que hi ha un outlier.
+
+```{r}
+# Clustering
+dist_mat <- dist(t(logCPM))
+hc <- hclust(dist_mat)
+plot(hc, labels=Covid_75$cohort, main="Clustering jeràrquic mostres (logCPM)", cex=0.7)
+```
+
+Seguim observant que les mostres de healhty i covid s'agrupen juntes, mentre que bacterial es situa per separat. A part, a bacterial seguim observant l'outlier.
+
+```{r}
+var_genes <- apply(logCPM, 1, var)
+top_var_genes <- names(sort(var_genes, decreasing=TRUE))[1:500]
+
+# Colors per cohorts
+library(RColorBrewer)
+cols <- brewer.pal(n = length(levels(Covid_75$cohort)), name = "Set1")
+group <- Covid_75$cohort
+sample_colors <- cols[group]
+
+# Heatmap amb heatmap.2
+heatmap.2(logCPM[top_var_genes, ], trace="none", col=bluered(100),
+          ColSideColors=sample_colors, 
+          main="Heatmap 500 gens més variables",
+          scale="row", margin=c(8,8))
+legend("bottomleft", legend=levels(group), fill=cols, border=NA, bty="n")
+```
+
+Com hem vist amb la anàlisis exploratòria, tenim un outlier. Per aquest motiu, caldrà eliminar-ho dels anàlisis. Podem detectar-ho per MDS.
+
+```{r}
+# Plotegem per veure quin valor té l'outlier.
+plotMDS(Covid_75_dge, col=as.numeric(Covid_75$cohort))
+
+# Veiem que outlier és 94478, el podem eliminar.
+
+outlier_sample <- "94478"
+Covid_75_dge_clean <- Covid_75_dge[, colnames(Covid_75_dge) != outlier_sample]
+Covid_75_clean <- Covid_75[, colnames(Covid_75) != outlier_sample]
+```
+
+Un cop ho hem eliminat, podem repetir els gràfics anteriors per veure si la distribució és millor. Com a mode d'exemple, farem el de MDS.
+
+```{r}
+# MDS plot
+plotMDS(Covid_75_dge_clean, col = colors[group], pch = pch[group], main = "MDS plot - Perfil d'expressió")
+legend("topright", legend = levels(group), col = colors, pch = pch)
+```
+Ara observem que les mostres es distribueixen millor, i que les agrupacions no depenen de l'outlier anterior. 
+
+## 4.1. Confusion Variables
+
+```{r}
+# NO SE COM FER-HO
+```
+
+# 5. Design and contrast matrix
+
 ```{r}
 
 ```
 
-# DEG
+
+## 5.1. DEG
+
 ```{r}
 
 ```
 
-# Functional analysis (ORA-GSEA)
+
+# 6. Bacterial vds healthy / Covid19 vs healthy
+```{r}
+
+```
+
+# 7. GSEA
 ```{r}
 
 ```
