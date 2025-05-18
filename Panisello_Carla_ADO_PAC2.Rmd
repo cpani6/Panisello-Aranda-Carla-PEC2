@@ -110,9 +110,9 @@ colData(Covid_se_clean)$age <- as.numeric(colData(Covid_se_clean)$age)
 colData(Covid_se_clean)$cohort <- as.factor(colData(Covid_se_clean)$cohort)
 
 # Netegem noms treient els símbols indicats a l'enunciat i substituïn per "_".
-colnames(colData(Covid_se_clean)) <- gsub("[\\s/\\.()\\-]+", "_", colnames(colData(Covid_se_clean)))
-rownames(colData(Covid_se_clean)) <- gsub("[\\s/\\.()\\-]+", "_", rownames(colData(Covid_se_clean)))
-colnames(Covid_se_clean) <- gsub("[\\s/\\.()\\-]+", "_", colnames(Covid_se_clean))
+colnames(colData(Covid_se_clean)) <- gsub("[\\/\\.()\\-]+", "_", colnames(colData(Covid_se_clean)))
+rownames(colData(Covid_se_clean)) <- gsub("[\\/\\.()\\-]+", "_", rownames(colData(Covid_se_clean)))
+colnames(Covid_se_clean) <- gsub("[\\/\\.()\\-]+", "_", colnames(Covid_se_clean))
 
 
 # TODO: check inside the colData!!
@@ -136,7 +136,8 @@ Covid_75_dge <- DGEList(counts = assay(Covid_75))
 keep <- rowSums(cpm(Covid_75_dge) > 0.5) >= 2
 table(keep)
 Covid_75_dge <- Covid_75_dge[keep,]
-# Filtrem el summarized experiment tambe 
+
+# Filtrem el summarized experiment també 
 Covid_75 <- Covid_75[keep,]
 ```
 
@@ -168,16 +169,13 @@ Observem la distribució de les diferents mostres. Observem com es distribueixen
 ```{r}
 # Normalitzarem amb el mètode trimmed mean of M values (TMM) fent servir 'calcNormFactors'.
 # TODO: revisar normalizacion
-Covid_75_dge <- calcNormFactors(Covid_75_dge)
-Covid_75_dge$samples
+Covid_75_dge_norm <- calcNormFactors(Covid_75_dge, method = "TMM")
+Covid_75_dge_norm$samples
 
 # Transformem amb LogCPM
-logCPM <- cpm(Covid_75_dge, log=TRUE)
+logCPM <- cpm(Covid_75_dge_norm, log = TRUE, normalized.lib.sizes = TRUE)
+assays(Covid_75, withDimnames = FALSE)[["normalized"]] <- Covid_75_dge_norm
 
-# Guardem al Expression assay les dades normalitzades ()
-assays(Covid_75)[["normalized"]] <- Covid_75_dge$counts
-
-# Plot per comprovar si les dades s'han noirmalitzat be
 # MA plot
 par(mfrow = c(1, 2))
 maPlot(assay(Covid_75,"counts")[,1], assay(Covid_75,"counts")[,3], pch=19, cex=.5, ylim=c(-8,8),
@@ -200,7 +198,6 @@ EDASeq::plotRLE(as.matrix(assay(Covid_75)), outline=FALSE,names=NULL)
 title("Raw data")
 EDASeq::plotRLE(assay(Covid_75,"normalized"), outline=FALSE,names=NULL) 
 title("Normalized data")
-
 ```
 
 ## 4. Exploratory Analysis
@@ -213,7 +210,7 @@ colors <- rep(c("#b0c4b1", "#CBC6B9", "#4a5759"), length.out=length(levels(group
 group <- factor(group, levels = c("COVID-19", "Bacterial", "healthy"))
 
 # MDS plot
-plotMDS(Covid_75_dge, col = colors[group], pch = pch[group], main = "MDS plot - Perfil d'expressió")
+plotMDS(Covid_75_dge_norm, col = colors[group], pch = pch[group], main = "MDS plot - Perfil d'expressió")
 legend("topright", legend = levels(group), col = colors, pch = pch)
 ```
 
@@ -223,7 +220,7 @@ Podem seguir fent anàlisis exploratòria amb MD plot.
 
 ```{r}
 # MD plot
-plotMD(Covid_75_dge, column = 1)
+plotMD(Covid_75_dge_norm, column = 1)
 abline(h = 0, col = "red", lty = 2, lwd = 2)
 ```
 
@@ -268,12 +265,12 @@ Com hem vist amb la anàlisis exploratòria, tenim un outlier. Per aquest motiu,
 
 ```{r}
 # Plotegem per veure quin valor té l'outlier.
-plotMDS(Covid_75_dge, col=as.numeric(Covid_75$cohort))
+plotMDS(Covid_75_dge_norm, col=as.numeric(Covid_75$cohort))
 
 # Veiem que outlier és 94478, el podem eliminar.
 
 outlier_sample <- "94478"
-Covid_75_dge_clean <- Covid_75_dge[, colnames(Covid_75_dge) != outlier_sample]
+Covid_75_dge_clean <- Covid_75_dge_norm[, colnames(Covid_75_dge_norm) != outlier_sample]
 Covid_75_clean <- Covid_75[, colnames(Covid_75) != outlier_sample]
 ```
 
@@ -289,12 +286,88 @@ Ara observem que les mostres es distribueixen millor, i que les agrupacions no d
 ## 4.1. Confusion Variables
 
 ```{r}
-# NO SE COM FER-HO
+# Primer de tot mirem quines possibles variables confusores pot haver
+colnames(colData(Covid_75))
+
+# De les que tenim, algunes podem ser Age, gender, race, time_since_onset, hospitalized. Fem gràfics MDS per cada un d'aquests.Preparem les variables primer.
+
+# Edat
+age <- colData(Covid_75)$age
+
+# Convertim edat en una escala de colors contínua
+age_factor <- cut(age, breaks = 5, include.lowest = TRUE)  
+colors_age <- colorRampPalette(c("lightblue", "darkred"))(length(levels(age_factor)))
+col_vector <- colors_age[as.numeric(age_factor)]
+
+# Fem el plot MDS
+plotMDS(Covid_75_dge_clean, col = col_vector, pch = pch[group], main = "MDS plot - Perfil d'expressió - Edat")
+legend("topright", legend = levels(age_factor), fill = colors_age, title = "Age")
+legend("bottomright", legend = levels(factor(group)), pch = unique(pch[group]), title = "Cohort")
+
+
 ```
+Per edat, observem que no hi ha canvis, que més o menys tot es distribueix igual.
+
+```{r}
+# Gender
+gender <- colData(Covid_75)$gender
+gender <- as.factor(gender)
+colors_gender <- c("#4a5759", "#CBC6B9")[1:nlevels(gender)]
+col_vector <- colors_gender[gender]
+plotMDS(Covid_75_dge_clean, col = col_vector, pch = pch[group], main = "MDS plot - Perfil d'expressió - Gènere")
+legend("topright", legend = levels(gender), fill = colors_gender, title = "Gender")
+legend("bottomright", legend = levels(factor(group)), pch = unique(pch[group]),title = "Cohort")
+
+```
+Observem que gènere no és una variable confusora.
+
+```{r}
+# Race
+race <- colData(Covid_75)$race
+race <- as.factor(race)
+colors_race <- c("#606c38", "#283618", "#fefae0", "#dda15e", "#bc6c25" )[1:nlevels(race)]
+col_vector_race <- colors_race[race]
+plotMDS(Covid_75_dge_clean, col = col_vector_race, pch = pch[group], main = "MDS plot - Perfil d'expressió - Raça")
+legend("topright", legend = levels(race), fill = colors_race)
+legend("bottomright", legend = levels(factor(group)), pch = unique(pch[group]),title = "Cohort")
+```
+Observem que raça tampoc podria considerar-se una variable confusora.
+
+```{r}
+# Hospitalitzats
+hospitalized <- colData(Covid_75)$hospitalized
+hospitalized <- as.factor(hospitalized)
+colors_hosp <- c("#606c38", "#283618", "#fefae0")[1:nlevels(hospitalized)]
+col_vector_hosp <- colors_hosp[hospitalized]
+plotMDS(Covid_75_dge_clean, col = col_vector_hosp, pch = pch[group], main = "MDS plot - Perfil d'expressió - Hospitalització")
+legend("topright", legend = levels(hospitalized), fill = colors_hosp)
+legend("bottomright", legend = levels(factor(group)), pch = unique(pch[group]),title = "Cohort")
+```
+Observem que hospitalització tampoc és un factor a tenir en compte.
+
+```{r}
+# Days since onset
+onset <- colData(Covid_75)$time_since_onset
+onset <- as.factor(onset)
+colors_onset <- c("#606c38", "#283618", "#fefae0")[1:nlevels(onset)]
+col_vector_onset <- colors_onset[onset]
+plotMDS(Covid_75_dge_clean, col = col_vector_onset, pch = pch[group], main = "MDS plot - Perfil d'expressió - Onset")
+legend("topright", legend = levels(onset), fill = colors_onset)
+legend("bottomright", legend = levels(factor(group)), pch = unique(pch[group]),title = "Cohort")
+```
+
+Observem que aquest últim paràmetre tampoc és una variable confusora. Tenint això en compte, no tindrem en compte cap d'aquests variables per fer la matriu de disseny i de contrast en el següent pas.
 
 # 5. Design and contrast matrix
 
 ```{r}
+# Creem la matriu de disseny, no cal treure variables confusores ja que no s'han detectat
+
+# Comprovem nivells:
+design <- model.matrix(~ 0 + group)
+colnames(design) <- levels(group)
+design
+
 
 ```
 
