@@ -24,6 +24,9 @@ suppressPackageStartupMessages(library(edgeR))
 suppressPackageStartupMessages(library(ggplot2))
 suppressPackageStartupMessages(library(reshape2))
 suppressPackageStartupMessages(library(gplots))
+suppressPackageStartupMessages(library(EnhancedVolcano))
+suppressPackageStartupMessages(library(VennDiagram))
+suppressPackageStartupMessages(library(ComplexHeatmap))
 ```
 
 # 1. Download the files from GSE161731
@@ -233,16 +236,7 @@ par(mar = c(5, 4, 4, 8), xpd = TRUE)
 plotMDS(Covid_75_dge_norm, col = colors[group], pch = pch[group], main = "MDS plot - Perfil d'expressió")
 legend("right",inset = c(-0.3, 0), legend = levels(group), col = colors, pch = pch,bty = "n")
 ```
-
 Observem que sembla que hi ha un outlier dintre del grup de Bacterial. A part, dona la sensació que les mostres de COVID_19 i healthy s'agrupen similar, mentre que Bacterial més diferent. 
-
-Podem seguir fent anàlisis exploratòria amb MD plot.
-
-```{r}
-# MD plot
-plotMD(Covid_75_dge_norm, column = 1)
-abline(h = 0, col = "red", lty = 2, lwd = 2)
-```
 
 ```{r}
 #Podem fer també PCA
@@ -315,24 +309,10 @@ Ara observem que les mostres es distribueixen millor, i que les agrupacions no d
 # Primer de tot mirem quines possibles variables confusores pot haver
 colnames(colData(Covid_75))
 
-# De les que tenim, algunes podem ser Age, gender, race, time_since_onset, hospitalized. Fem gràfics MDS per cada un d'aquests.Preparem les variables primer.
+# De les que tenim, algunes podem ser Age, gender, race, time_since_onset, hospitalized. Fem gràfics MDS (boxplots per variables numeriques) per cada un d'aquests. Preparem les variables primer.
 
 # Edat
-age <- colData(Covid_75)$age
-
-# Convertim edat en una escala de colors contínua
-age_factor <- cut(age, breaks = 5, include.lowest = TRUE)  
-colors_age <- colorRampPalette(c("lightblue", "darkred"))(length(levels(age_factor)))
-col_vector <- colors_age[as.numeric(age_factor)]
-
-# Fem el plot MDS
-par(mar = c(5, 4, 4, 8), xpd = TRUE)
-plotMDS(Covid_75_dge_clean, col = col_vector, pch = pch[group], main = "MDS plot - Perfil d'expressió - Edat")
-legend("topright",  inset = c(-0.3, 0), legend = levels(age_factor), fill = colors_age, title = "Age",bty = "n")
-legend("bottomright",  inset = c(-0.3, 0), legend = levels(factor(group)), pch = unique(pch[group]), title = "Cohort",bty = "n")
-
-
-boxplot(age ~ cohort, data = colData(Covid_75), col=colors_age)
+boxplot(age ~ cohort, data = colData(Covid_75), col=c("lightblue", "darkred","grey"))
 anova_result <- aov(age ~ cohort, data = colData(Covid_75))
 summary(anova_result)
 ```
@@ -424,7 +404,24 @@ chisq.test(table(colData(Covid_75)$cohort, colData(Covid_75)$batch))
 # 5. Design and contrast matrix
 
 ```{r}
+set.seed(myseed)
+sample(c("edgeR", "voom+limma", "DESeq2"), size = 1)
 
+# Farem servir edgeR.
+
+# Creamos la model matrix con el grupo y las variables confusoras
+design <- model.matrix(~ 0 + group + age + race + batch, data = colData(Covid_75))
+
+# Asignamos nombres a los coeficientes de diseño
+colnames(design)[1:3] <- levels(group)
+
+dge <- DGEList(counts = assay(Covid_75,"normalized"), group = group)
+
+# Estimamos dispersión
+dge <- estimateDisp(dge, design)
+
+# Ajustamos el modelo lineal
+fit <- glmQLFit(dge, design)
 ```
 
 
@@ -432,16 +429,74 @@ chisq.test(table(colData(Covid_75)$cohort, colData(Covid_75)$batch))
 
 ```{r}
 
+# Creamos la matriz de contrastes
+contrasts <- makeContrasts( Bacterial_vs_healthy = Bacterial - healthy,
+                            COVID19_vs_healthy = `COVID_19` - healthy,levels = design)
+
+# Bacterial vs healthy
+lrt_bact_vs_healthy <- glmQLFTest(fit, contrast = contrasts[, "Bacterial_vs_healthy"])
+
+# Extraemos los resultados con logFC > 1.5 y FDR < 0.05
+res_bact <- topTags(lrt_bact_vs_healthy, n = Inf)$table
+
+# Volcano plot
+EnhancedVolcano(res_bact,
+                lab = rownames(res_bact),
+                x = 'logFC',
+                y = 'FDR',
+                pCutoff = 0.05,
+                FCcutoff = 1.5, # Cutoff de FC
+                title = 'Volcano plot: Bacterial vs Healthy')
+
+# COVID19 vs healthy
+# Prueba de hipótesis para cada contraste
+lrt_covid_vs_healthy <- glmQLFTest(fit, contrast = contrasts[, "COVID19_vs_healthy"])
+
+res_covid <- topTags(lrt_covid_vs_healthy, n = Inf)$table
+
+# Volcano plot
+EnhancedVolcano(res_covid,
+                lab = rownames(res_covid),
+                y='logFC',
+                x='FDR',
+                pCutoff = 0.05,
+                FCcutoff = 1.5, # Cutoff de FC
+                title = 'Volcano plot: COVID-19 vs Healthy')
 ```
 
-
 # 6. Bacterial vds healthy / Covid19 vs healthy
-```{r}
 
+```{r}
+genes_bact <- rownames(res_bact)[res_bact$FDR < 0.05 & abs(res_bact$logFC) > 1.5]
+genes_covid <- rownames(res_covid)[res_covid$FDR < 0.05 & abs(res_covid$logFC) > 1.5]
+
+venn.plot <- venn.diagram(
+  x = list(Bacterial = genes_bact, COVID19 = genes_covid),
+  filename = NULL,
+  fill = c("#CBC6B9", "#b0c4b1"),
+  alpha = 0.5,
+  cex = 2,
+  cat.cex = 1.5,
+  cat.pos = 0,
+  main = "Gens diferencialment expressats (vs Healty)"
+)
+
+grid.newpage()
+grid.draw(venn.plot)
+
+
+#  UpSetR
+data_upset <- list(Bacterial= genes_bact,
+     COVID19 =genes_covid)
+data_upset_matrix <- make_comb_mat(list_to_matrix(data_upset)) 
+
+UpSet(data_upset_matrix,top_annotation = upset_top_annotation(data_upset_matrix, add_numbers = TRUE))
 ```
 
 # 7. GSEA
+
 ```{r}
+
 
 ```
 
